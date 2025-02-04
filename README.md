@@ -1,94 +1,241 @@
-# Obsidian Sample Plugin
+# Obsidian Deadline Plugin
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+## Overview
+**Deadline** is an Obsidian plugin designed to help organize and visualize projects and their deadlines in the context of actual available working hours. It balances priorities and deadlines to provide a clear overview of what requires immediate attention.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+---
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+## Settings (Defaults):
+- **`project_path`**: `./Projects`  
+  *Path to the directory where projects are stored.*
 
-## First time developing plugins?
+- **`working_hours_per_week`**: `40`  
+  *Total available working hours per week.*
 
-Quick starting guide for new plugin devs:
+- **`working_days_per_week`**: `5`  
+  *Number of working days per week.*
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+- **`priority_levels`**: `3`  
+  *Number of priority levels for projects.*
 
-## Releasing new releases
+- **`priority_split`**: `[50, 35, 15]`  
+  *Percentage of available time allocated to each priority level.*
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+---
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+## Commands:
 
-## Adding your plugin to the community plugin list
+1. **`new_project`**  
+   - Creates a new project with a unique `project_id`.  
+   - A new directory named after the `project_id` is created in `project_path`.  
+   - A `New_Project.md` file is generated in the project directory using the **`project_template`**.
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+2. **`new_subproject`**  
+   - Creates a new subproject within an existing project directory.  
+   - A new Markdown file `<Subproject_Name>.md` is created.  
+   - The subproject template includes a link to the main project (`main_project`).
 
-## How to use
+3. **`log_time`**  
+   - Allows users to select a project or subproject and log time spent in hours (`h`) or minutes (`min`).  
+   - Time is logged in a **`time_log.md`** file within the respective project/subproject directory.  
+   - The **Progress** section in the main project/subproject file is automatically updated:
+     - **Time Spent:** Sum of entries from `time_log.md`.
+     - **Time Remaining:** Difference between estimated and logged work time.
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+---
 
-## Manually installing the plugin
+## Core Logic (Workload Distribution):
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+1. **Weekly Work Time Distribution by Priority:**  
+   - Weekly working hours are distributed based on `priority_split`.
 
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
+2. **Equal Time Distribution Among Projects of the Same Priority:**  
+   - Projects on the same priority level share the allocated time equally.
 
-## Funding URL
+3. **Calculation of Required Working Days:**  
+   - **Remaining Work Time** = `estimated_work_time - time_logged`
+   - **Weeks Needed** = `Remaining Work Time / allocated_weekly_hours`
+   - **Required Working Days** = `Weeks Needed * working_days_per_week`
 
-You can include funding URLs where people who use your plugin can financially support it.
+4. **Considering Available Working Days Until Deadline:**  
+   - **Available Days** = Number of remaining **working days** (accounting for `working_days_per_week`).
+   - **Urgency Evaluation:**  
+     - If `Required Working Days > Available Days` → **URGENT**  
+     - If `Required Working Days <= Available Days` → **On Track**
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+---
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+## Templates:
+
+### `project_template` Structure:
+
+**YAML Header:**  
+```yaml
+---
+id: <project_id>
+name: <project_name>
+deadline: <YYYY-MM-DD>
+priority_level: <1 | 2 | 3>
+estimated_work_time: <hours>
+status: <open | in_progress | completed>
+---
 ```
 
-If you have multiple URLs, you can also do:
+**Markdown Content:**  
+```markdown
+# <Project Name>
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
+## Project Description
+*Placeholder for the project description.*
+
+---
+
+## Time Management
+- **Deadline:** <YYYY-MM-DD>
+- **Estimated Work Time:** <hours> hours
+- **Priority Level:** <1 | 2 | 3>
+- **Available Work Time (based on schedule):** <calculated>
+
+---
+
+## Progress
+- **Status:** <open | in_progress | completed>
+- **Time Spent:** <sum of time_log.md> hours
+- **Time Remaining:** <estimated_work_time - time_spent> hours
 ```
 
-## API Documentation
+---
 
-See https://github.com/obsidianmd/obsidian-api
+### `subproject_template` Structure:
+
+**YAML Header:**  
+```yaml
+---
+id: <subproject_id>
+name: <subproject_name>
+main_project: <main_project_id>
+deadline: <YYYY-MM-DD>
+priority_level: <1 | 2 | 3>
+estimated_work_time: <hours>
+status: <open | in_progress | completed>
+---
+```
+
+**Markdown Content:**  
+```markdown
+# <Subproject Name>
+
+## Subproject Description
+*Placeholder for the subproject description.*
+
+---
+
+## Time Management
+- **Linked to Main Project:** <main_project_name>
+- **Deadline:** <YYYY-MM-DD>
+- **Estimated Work Time:** <hours> hours
+- **Priority Level:** <1 | 2 | 3>
+- **Available Work Time (based on schedule):** <calculated>
+
+---
+
+## Progress
+- **Status:** <open | in_progress | completed>
+- **Time Spent:** <sum of time_log.md> hours
+- **Time Remaining:** <estimated_work_time - time_spent> hours
+```
+
+---
+
+### `time_log.md` Structure:
+
+```markdown
+# Time Log for <Project/Subproject Name>
+
+| Date       | Time Spent (h) | Description          |
+|------------|----------------|----------------------|
+| 2024-02-04 | 2              | Initial research     |
+| 2024-02-05 | 1.5            | Drafted first version|
+```
+
+---
+
+## Dashboard (First Version):
+
+| Project Name    | Priority | Deadline   | Remaining Work (h) | Time Allocated/Week (h) | Needed Days | Days Until Deadline | Status   |
+|-----------------|----------|------------|--------------------|-------------------------|-------------|---------------------|----------|
+| Project Alpha   | 1        | 2024-02-10 | 10                 | 5                       | 5           | 4                   | 🔴 Overdue |
+| Project Beta    | 2        | 2024-03-01 | 14                 | 7                       | 5           | 20                  | 🟢 On Track |
+| Project Gamma   | 3        | 2024-02-15 | 4                  | 2                       | 2           | 8                   | 🟡 Tight |
+
+---
+
+## Future Features (Planned):
+
+1. **Dynamic Priority Adjustment:**  
+   Automatically shifts focus to urgent projects as deadlines approach.
+
+2. **Daily Task List:**  
+   Generates a list of the most urgent tasks for each day.
+
+3. **Warning System & Notifications:**  
+   Alerts when projects risk missing deadlines.
+
+4. **Planned Days Off (Vacations/Business Trips):**  
+   - Ability to define **planned days off** in settings (e.g., vacations, business trips).
+   - These are considered in the calculation of available working days.
+
+   **Example in YAML:**  
+   ```yaml
+   planned_days_off:
+     - 2024-02-12  # Vacation
+     - 2024-02-14  # Business Trip
+   ```
+
+5. **Global `master_log.md`:**  
+   Central log file summarizing time entries across all projects for a comprehensive overview.
+
+---
+
+## Feature Checklist
+
+### Core Features
+- [ ] **settings and defaults**
+
+- [ ] **Command Implementation**  
+  - [ ] `new_project`: Create new project directories and initialize templates.  
+  - [ ] `new_subproject`: Create subprojects linked to main projects.  
+  - [ ] `log_time`: Log time entries and update project progress.
+
+- [ ] **Template System**  
+  - [ ] Project Template with YAML header and structure.  
+  - [ ] Subproject Template with main project linkage.
+
+- [ ] **Time Logging & Progress Updates**  
+  - [ ] Generate `time_log.md` for each project/subproject.  
+  - [ ] Automatically update progress based on logged time.
+
+- [ ] **Workload Distribution Logic**  
+  - [ ] Distribute weekly working hours based on priority splits.  
+  - [ ] Equal time allocation for projects with the same priority.
+
+- [ ] **Urgency Evaluation**  
+  - [ ] Calculate required working days for project completion.  
+  - [ ] Compare with available working days until deadlines.
+
+- [ ] **Dashboard Display**  
+  - [ ] Visualize project status, deadlines, and time allocations.
+
+### Future Features (Planned)
+- [ ] **Dynamic Priority Adjustment**  
+- [ ] **Daily Task List Generation**  
+- [ ] **Warning System & Notifications**  
+- [ ] **Planned Days Off (Vacations/Business Trips)**  
+- [ ] **Global `master_log.md` for Time Tracking Across Projects**  
+
+---
+
+## License
+[LICENSE](LICENSE)
+
+
