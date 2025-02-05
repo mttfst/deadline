@@ -1,11 +1,11 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
-	"version": "1.0.0",
+	"id": "deadline-plugin",
+	"name": "Deadline",
+	"version": "0.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
+	"description": "Organize and visualize projects and deadlines based on your real available working hours. Balance priorities and deadlines efficiently.",
+	"author": "mttfst",
+	"authorUrl": "https://github.com/mttfst/deadline",
 	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"isDesktopOnly": true
 }
