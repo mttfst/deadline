@@ -32,7 +32,7 @@ export const projectTemplate = `---
 export const subprojectTemplate = `---
  id: {{subprojectId}}
  name: {{subprojectName}}
- main: {{mainName}}
+ main: "[[{{mainName}}]]"
  deadline: 
  priority_level: 1
  estimated_work_time: 0

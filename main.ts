@@ -37,7 +37,7 @@ export default class DeadlinePlugin extends Plugin {
 			this.settings.projectPath = this.settings.projectPath.replace(/^\.\//, '');
 			await this.saveSettings();
 		}
-		const projects = this.getProjectList();
+
 		// Add settings tab to the Obsidian interface
 		this.addSettingTab(new DeadlineSettingTab(this.app, this));
 
@@ -89,16 +89,16 @@ export default class DeadlinePlugin extends Plugin {
 			.filter(item => item instanceof TFolder)
 			.map(folder => folder.name);
 
-		new Notice(`Found projects: ${projectFolders.length > 0 ? projectFolders.join(', ') : 'None'}`);
 		return projectFolders;
 	}
 
 	// Function to create a new project
 	async createNewProject(shortName: string) {
 		const projectId = this.settings.nextProjectId.toString().padStart(3, '0');
-		const folderName = `${projectId}-${shortName}`;
+		// const folderName = `${projectId}-${shortName}`;
+		const folderName = `${shortName}`;
 		const projectFolderPath = `${this.settings.projectPath}/${folderName}`;
-		const projectFileName = `${shortName}.md`;
+		const projectFileName = `main_${shortName}.md`;
 		const projectFilePath = `${projectFolderPath}/${projectFileName}`;
 
 		try {
@@ -111,7 +111,8 @@ export default class DeadlinePlugin extends Plugin {
 				.replace(/\{\{projectName\}\}/g, shortName);
 
 			// Create the new project file with the loaded template
-			await this.app.vault.create(projectFilePath, projectContent);
+			const newFile = await this.app.vault.create(projectFilePath, projectContent);
+			await this.app.workspace.getLeaf().openFile(newFile);
 
 			// Increment the project ID
 			this.settings.nextProjectId++;
@@ -120,29 +121,33 @@ export default class DeadlinePlugin extends Plugin {
 			new Notice(`New project created: ${folderName}`);
 		} catch (error) {
 			console.error('Failed to create new project:', error);
-			new Notice('Failed to create new project. Check console for details.');
+			new Notice(`Failed to create new project. ${error.message}`);
 		}
 	}
 
-		async createNewSubProject(mainProject: string, subProjectName: string) {
+	async createNewSubProject(mainProject: string, subProjectName: string) {
 		const projectFolderPath = `${this.settings.projectPath}/${mainProject}`;
-		const subProjectFileName = `${subProjectName}.md`;
+		const subProjectFiles = (await this.app.vault.adapter.list(projectFolderPath)).files;
+		const subProjectCount = subProjectFiles.filter(file => file.startsWith(`${projectFolderPath}/sub_`)).length;
+		const subProjectId = `${this.settings.nextProjectId.toString().padStart(3, '0')}_${(subProjectCount + 1).toString().padStart(2, '0')}`;
+		const subProjectFileName = `sub_${subProjectName}.md`;
 		const subProjectFilePath = `${projectFolderPath}/${subProjectFileName}`;
 
 		try {
 			// Load the project template and add main project reference
 			const subProjectContent = subprojectTemplate
-				.replace('{{projectId}}', mainProject)
+				.replace('{{subprojectId}}', subProjectId)
 				.replace('{{subprojectName}}', subProjectName)
-				.replace('{{mainName}}', `[${projectFolderPath}/${mainProject}]`)
+				.replace('{{mainName}}', `main_${mainProject}`)
 
 			// Create the new subproject file
-			await this.app.vault.create(subProjectFilePath, subProjectContent);
+			const newFile = await this.app.vault.create(subProjectFilePath, subProjectContent);
+			await this.app.workspace.getLeaf().openFile(newFile);
 
 			new Notice(`New subproject created: ${subProjectName} under ${mainProject}`);
 		} catch (error) {
 			console.error('Failed to create new subproject:', error);
-			new Notice('Failed to create new subproject. Check console for details.');
+			new Notice(`Failed to create new subproject. ${error.message}`);
 		}
 	}
 }
@@ -187,6 +192,7 @@ class ProjectModal extends Modal {
 		submitButton.addEventListener('click', submitProject);
 		inputEl.inputEl.addEventListener('keydown', (event) => {
 			if (event.key === 'Enter') {
+				event.preventDefault();
 				submitProject();
 			}
 		});
@@ -258,6 +264,7 @@ class SubProjectNameModal extends Modal {
 		submitButton.addEventListener('click', submitSubProject);
 		inputEl.inputEl.addEventListener('keydown', (event) => {
 			if (event.key === 'Enter') {
+				event.preventDefault();
 				submitSubProject();
 			}
 		});
