@@ -1,4 +1,5 @@
-import { App, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, Notice, TFile, Modal, TextComponent, DropdownComponent } from 'obsidian';
+import projectTemplate from './templates';
 
 // 1. Define the interface for plugin settings
 interface DeadlinePluginSettings {
@@ -7,6 +8,7 @@ interface DeadlinePluginSettings {
 	workingDaysPerWeek: number;
 	priorityLevels: number;
 	prioritySplit: number[];
+	nextProjectId: number;
 }
 
 // 2. Default values for the settings
@@ -15,7 +17,8 @@ const DEFAULT_SETTINGS: DeadlinePluginSettings = {
 	workingHoursPerWeek: 40,
 	workingDaysPerWeek: 5,
 	priorityLevels: 3,
-	prioritySplit: [50, 35, 15]
+	prioritySplit: [50, 35, 15],
+	nextProjectId: 1
 };
 
 // 3. Main plugin class
@@ -31,14 +34,105 @@ export default class DeadlinePlugin extends Plugin {
 
 		// Add settings tab to the Obsidian interface
 		this.addSettingTab(new DeadlineSettingTab(this.app, this));
+
+		// Register the new project command
+		this.addCommand({
+			id: 'new_project',
+			name: 'Create New Project',
+			callback: async () => {
+				new ProjectModal(this.app, async (shortName: string) => {
+					await this.createNewProject(shortName);
+				}).open();
+			}
+		});
 	}
 
 	// Save the current settings
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+	// Function to create a new project
+	async createNewProject(shortName: string) {
+		const projectId = this.settings.nextProjectId.toString().padStart(3, '0');
+		const folderName = `${projectId}-${shortName}`;
+		const projectFolderPath = `${this.settings.projectPath}/${folderName}`;
+		const projectFileName = `${shortName}.md`;
+		const projectFilePath = `${projectFolderPath}/${projectFileName}`;
+
+		try {
+			// Create the project folder
+			await this.app.vault.createFolder(projectFolderPath);
+
+			// Load the project template from an external file
+			const projectContent = projectTemplate
+				.replace(/\{\{projectId\}\}/g, projectId)
+				.replace(/\{\{projectName\}\}/g, shortName);
+
+			// Create the new project file with the loaded template
+			await this.app.vault.create(projectFilePath, projectContent);
+
+			// Increment the project ID
+			this.settings.nextProjectId++;
+			await this.saveSettings();
+
+			new Notice(`New project created: ${folderName}`);
+		} catch (error) {
+			console.error('Failed to create new project:', error);
+			new Notice('Failed to create new project. Check console for details.');
+		}
+	}
 }
 
+// Modal for entering project name
+class ProjectModal extends Modal {
+	callback: (shortName: string) => void;
+
+	constructor(app: App, callback: (shortName: string) => void) {
+		super(app);
+		this.callback = callback;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl('h2', { text: 'Enter Project Name' });
+
+		// Create a wrapper div for styling
+		const inputContainer = contentEl.createEl('div', { cls: 'project-input-container' });
+
+		const inputEl = new TextComponent(inputContainer);
+		inputEl.inputEl.style.width = '100%';
+		inputEl.inputEl.placeholder = 'Project short name';
+
+		// Create a button container for alignment
+		const buttonContainer = contentEl.createEl('div', { cls: 'button-container' });
+
+		const submitButton = buttonContainer.createEl('button', { text: 'Create' });
+		submitButton.style.marginTop = '10px'; // Add spacing between input and button
+
+    	const submitProject = () => {
+			const shortName = inputEl.getValue().trim();
+			if (shortName) {
+				this.callback(shortName);
+				this.close();
+			} else {
+				new Notice('Please enter a project name.');
+			}
+		};
+
+		// Add event listeners
+		submitButton.addEventListener('click', submitProject);
+		inputEl.inputEl.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter') {
+				submitProject();
+			}
+		});
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
 // 4. Define the settings tab
 class DeadlineSettingTab extends PluginSettingTab {
 	plugin: DeadlinePlugin;
