@@ -46,8 +46,10 @@ export default class DeadlinePlugin extends Plugin {
 			id: 'new_project',
 			name: 'Create New Project',
 			callback: async () => {
-				new ProjectModal(this.app, async (shortName: string) => {
-					await this.createNewProject(shortName);
+		        // new NameInputModal(this.app, 'Enter Project Name', 'Project short name', async (shortName: string) => {
+					// await this.createNewProject(shortName);
+				new NameInputModal(this.app, this.settings, 'Enter Project Details', 'Project short name', async (shortName: string, deadline: string, priority: string, estimatedHours: string) => {
+					await this.createNewProject(shortName, deadline, priority, estimatedHours);
 				}).open();
 			}
 		});
@@ -63,8 +65,8 @@ export default class DeadlinePlugin extends Plugin {
 					return;
 				}
 				new SelectProjectModal(this.app, projects, async (mainProject) => {
-					new SubProjectNameModal(this.app, async (subProjectName) => {
-						await this.createNewSubProject(mainProject, subProjectName);
+					new NameInputModal(this.app, this.settings, 'Enter Subproject Details', 'Subproject name', async (subProjectName: string, deadline: string, priority: string, estimatedHours: string) => {
+						await this.createNewSubProject(mainProject, subProjectName, deadline, priority, estimatedHours);
 					}).open();
 				}).open();
 			}
@@ -93,13 +95,19 @@ export default class DeadlinePlugin extends Plugin {
 	}
 
 	// Function to create a new project
-	async createNewProject(shortName: string) {
+	async createNewProject(shortName: string, deadline: string, priority: string, estimatedHours: string) {
 		const projectId = this.settings.nextProjectId.toString().padStart(3, '0');
-		// const folderName = `${projectId}-${shortName}`;
 		const folderName = `${shortName}`;
 		const projectFolderPath = `${this.settings.projectPath}/${folderName}`;
 		const projectFileName = `main_${shortName}.md`;
 		const projectFilePath = `${projectFolderPath}/${projectFileName}`;
+		const parsedPriority = parseInt(priority, 10);
+		const parsedHours = parseFloat(estimatedHours);
+
+		console.log('name ',shortName)
+		console.log('deadline ',deadline)
+		console.log('priority ',priority)
+		console.log('estimatedHours ',estimatedHours)
 
 		try {
 			// Create the project folder
@@ -108,7 +116,10 @@ export default class DeadlinePlugin extends Plugin {
 			// Load the project template from an external file
 			const projectContent = projectTemplate
 				.replace(/\{\{projectId\}\}/g, `'${projectId}'`)
-				.replace(/\{\{projectName\}\}/g, shortName);
+				.replace(/\{\{projectName\}\}/g, shortName)
+				.replace("{{deadline}}", deadline !== "" ? deadline : "")
+				.replace("{{priority}}", (!isNaN(parsedPriority) && parsedPriority >= 1 && parsedPriority <= this.settings.priorityLevels) ? parsedPriority.toString() : "1")
+				.replace("{{estimatedHours}}", (!isNaN(parsedHours) && parsedHours >= 0) ? parsedHours.toFixed(1) : "0");
 
 			// Create the new project file with the loaded template
 			const newFile = await this.app.vault.create(projectFilePath, projectContent);
@@ -125,13 +136,15 @@ export default class DeadlinePlugin extends Plugin {
 		}
 	}
 
-	async createNewSubProject(mainProject: string, subProjectName: string) {
+	async createNewSubProject(mainProject: string, subProjectName: string, deadline: string, priority: string, estimatedHours: string) {
 		const projectFolderPath = `${this.settings.projectPath}/${mainProject}`;
 		const subProjectFiles = (await this.app.vault.adapter.list(projectFolderPath)).files;
 		const subProjectCount = subProjectFiles.filter(file => file.startsWith(`${projectFolderPath}/sub_`)).length;
 		const subProjectId = `${this.settings.nextProjectId.toString().padStart(3, '0')}_${(subProjectCount + 1).toString().padStart(2, '0')}`;
 		const subProjectFileName = `sub_${subProjectName}.md`;
 		const subProjectFilePath = `${projectFolderPath}/${subProjectFileName}`;
+		const parsedPriority = parseInt(priority, 10);
+		const parsedHours = parseFloat(estimatedHours);
 
 		try {
 			// Load the project template and add main project reference
@@ -139,6 +152,9 @@ export default class DeadlinePlugin extends Plugin {
 				.replace('{{subprojectId}}', subProjectId)
 				.replace('{{subprojectName}}', subProjectName)
 				.replace('{{mainName}}', `main_${mainProject}`)
+				.replace("{{deadline}}", deadline !== "" ? deadline : "")
+				.replace("{{priority}}", (!isNaN(parsedPriority) && parsedPriority >= 1 && parsedPriority <= this.settings.priorityLevels) ? parsedPriority.toString() : "1")
+				.replace("{{estimatedHours}}", (!isNaN(parsedHours) && parsedHours >= 0) ? parsedHours.toFixed(1) : "0");
 
 			// Create the new subproject file
 			const newFile = await this.app.vault.create(subProjectFilePath, subProjectContent);
@@ -179,55 +195,69 @@ ${subProjects.join('\n')}`;
 	}
 }
 
-// Modal for entering project name
-class ProjectModal extends Modal {
-	callback: (shortName: string) => void;
 
-	constructor(app: App, callback: (shortName: string) => void) {
+// Modal for entering project name
+class NameInputModal extends Modal {
+	private title: string;
+	private placeholder: string;
+	private settings: DeadlinePluginSettings;
+	private callback: (name: string, deadline: string, priority: string, estimatedHours: string) => void;
+
+	constructor(app: App, settings: DeadlinePluginSettings, title: string, placeholder: string, callback: (name: string, deadline: string, priority: string, estimatedHours: string) => void) {
 		super(app);
+		this.settings = settings;
+		this.title = title;
+		this.placeholder = placeholder;
 		this.callback = callback;
 	}
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl('h2', { text: 'Enter Project Name' });
+		contentEl.createEl('h2', { text: this.title });
 
-		// Create a wrapper div for styling
-		const inputContainer = contentEl.createEl('div', { cls: 'project-input-container' });
-
-		const inputEl = new TextComponent(inputContainer);
+		contentEl.createEl('h3', { text: 'Project Title' });
+		const inputEl = new TextComponent(contentEl);
 		inputEl.inputEl.style.width = '100%';
-		inputEl.inputEl.placeholder = 'Project short name';
+		inputEl.inputEl.placeholder = this.placeholder;
 
-		// Create a button container for alignment
-		const buttonContainer = contentEl.createEl('div', { cls: 'button-container' });
+		contentEl.createEl('h4', { text: 'Deadline (optional)' });
+		const deadlineEl = new TextComponent(contentEl);
+        deadlineEl.inputEl.type = "date";  
+        deadlineEl.inputEl.style.width = '100%';
 
-		const submitButton = buttonContainer.createEl('button', { text: 'Create' });
-		submitButton.style.marginTop = '10px'; // Add spacing between input and button
+		contentEl.createEl('h4', { text: 'Priority Level (optional)' });
+		const priorityEl = new TextComponent(contentEl);
+		priorityEl.inputEl.style.width = '100%';
+		priorityEl.setPlaceholder(`1 - High, ${this.settings.priorityLevels.toString()} - Low`);
 
-    	const submitProject = () => {
-			const shortName = inputEl.getValue().trim();
-			if (shortName) {
-				this.callback(shortName);
+		contentEl.createEl('h4', { text: 'Work Load (optional)' });
+		const estimatedHoursEl = new TextComponent(contentEl);
+		estimatedHoursEl.inputEl.style.width = '100%';
+		estimatedHoursEl.setPlaceholder('Hours');
+
+		const submitButton = contentEl.createEl('button', { text: 'Create' });
+		submitButton.style.marginTop = '10px';
+
+		const submit = () => {
+			const name = inputEl.getValue().trim();
+			const deadline = deadlineEl.getValue().trim();
+			const priority = priorityEl.getValue();
+			const estimatedHours = estimatedHoursEl.getValue().trim();
+			if (name) {
+				this.callback(name, deadline, priority, estimatedHours);
 				this.close();
 			} else {
-				new Notice('Please enter a project name.');
+				new Notice(`Please enter a valid name.`);
 			}
 		};
 
-		// Add event listeners
-		submitButton.addEventListener('click', submitProject);
+		submitButton.addEventListener('click', submit);
 		inputEl.inputEl.addEventListener('keydown', (event) => {
 			if (event.key === 'Enter') {
 				event.preventDefault();
-				submitProject();
+				submit();
 			}
 		});
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
 	}
 }
 
@@ -255,46 +285,6 @@ class SelectProjectModal extends SuggestModal<string> {
 	// Handle user selection
 	onChooseSuggestion(item: string, evt: MouseEvent | KeyboardEvent) {
 		this.callback(item);
-	}
-}
-
-// Modal for entering the subproject name
-class SubProjectNameModal extends Modal {
-	callback: (subProjectName: string) => void;
-
-	constructor(app: App, callback: (subProjectName: string) => void) {
-		super(app);
-		this.callback = callback;
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.createEl('h2', { text: 'Enter Subproject Name' });
-
-		const inputEl = new TextComponent(contentEl);
-		inputEl.inputEl.style.width = '100%';
-		inputEl.inputEl.placeholder = 'Subproject Name';
-
-		const submitButton = contentEl.createEl('button', { text: 'Create' });
-		submitButton.style.marginTop = '10px';
-
-		const submitSubProject = () => {
-			const subProjectName = inputEl.getValue().trim();
-			if (subProjectName) {
-				this.callback(subProjectName);
-				this.close();
-			} else {
-				new Notice('Please enter a subproject name.');
-			}
-		};
-
-		submitButton.addEventListener('click', submitSubProject);
-		inputEl.inputEl.addEventListener('keydown', (event) => {
-			if (event.key === 'Enter') {
-				event.preventDefault();
-				submitSubProject();
-			}
-		});
 	}
 }
 

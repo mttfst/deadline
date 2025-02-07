@@ -1,9 +1,9 @@
 export const projectTemplate = `---
  id: {{projectId}}
  name: {{projectName}}
- deadline: 
- priority_level: 1
- estimated_work_time: 0
+ deadline: {{deadline}} 
+ priority_level: {{priority}}
+ estimated_work_time: {{estimatedHours}}
  status: open
 ---
 
@@ -33,9 +33,9 @@ export const subprojectTemplate = `---
  id: {{subprojectId}}
  name: {{subprojectName}}
  main: "[[{{mainName}}]]"
- deadline: 
- priority_level: 1
- estimated_work_time: 0
+ deadline: {{deadline}} 
+ priority_level: {{priority}}
+ estimated_work_time: {{estimatedHours}}
  status: open
 ---
 
