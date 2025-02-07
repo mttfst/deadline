@@ -142,12 +142,39 @@ export default class DeadlinePlugin extends Plugin {
 
 			// Create the new subproject file
 			const newFile = await this.app.vault.create(subProjectFilePath, subProjectContent);
+			await this.updateMainProjectList(mainProject);
 			await this.app.workspace.getLeaf().openFile(newFile);
+
 
 			new Notice(`New subproject created: ${subProjectName} under ${mainProject}`);
 		} catch (error) {
 			console.error('Failed to create new subproject:', error);
 			new Notice(`Failed to create new subproject. ${error.message}`);
+		}
+	}
+
+// Function to update the main project note with subproject links
+	async updateMainProjectList(mainProject: string) {
+		const projectFolderPath = `${this.settings.projectPath}/${mainProject}`;
+		const projectFilePath = `${projectFolderPath}/main_${mainProject}.md`;
+		const subProjectFiles = (await this.app.vault.adapter.list(projectFolderPath)).files;
+		const subProjects = subProjectFiles.filter(file => file.includes('/sub_')).map(file => `- [[${file.split('/').pop()}]]`);
+
+		try {
+			let mainProjectFile = await this.app.vault.read(await this.app.vault.getAbstractFileByPath(projectFilePath) as TFile);
+			const subProjectSection = `## Subprojects
+${subProjects.join('\n')}`;
+
+			if (mainProjectFile.includes('## Subprojects')) {
+				mainProjectFile = mainProjectFile.replace(/## Subprojects[\s\S]*?(?=\n##|$)/, subProjectSection);
+			} else {
+				mainProjectFile += `\n\n${subProjectSection}`;
+			}
+
+			await this.app.vault.modify(await this.app.vault.getAbstractFileByPath(projectFilePath) as TFile, mainProjectFile);
+		} catch (error) {
+			console.error('Failed to update main project note:', error);
+			new Notice('Failed to update main project note. Check console for details.');
 		}
 	}
 }
