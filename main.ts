@@ -2,6 +2,10 @@ import { App, Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, Modal, 
 import { promises as fs } from "fs";
 import {projectTemplate, subprojectTemplate} from './templates';
 
+
+const FILE_PATH = "./projects.json";
+
+
 // 1. Define the interface for plugin settings
 interface DeadlinePluginSettings {
 	projectPath: string;
@@ -73,10 +77,96 @@ class SettingsUtils {
 }
 
 
-			}
+class JsonUtils {
+	projectManager: ProjectManager;
+	settingsUtils: SettingsUtils;
+	settings: DeadlinePluginSettings;
+
+	constructor(projectManager: ProjectManager, settingsUtils: SettingsUtils) {
+		this.projectManager = projectManager;
+		this.settingsUtils = settingsUtils;
+		this.settings = this.settingsUtils.settings;
 	}
 
+async loadData(): Promise<{ projects: ProjectImpl[] }> {
+		try {
+			// Check if the file exists, otherwise create an empty one
+			try {
+				await fs.access(FILE_PATH, fs.constants.F_OK);
+			} catch {
+				await fs.writeFile(FILE_PATH, JSON.stringify({ projects: [] }, null, 2), "utf8");
+			}
+
+			// Read and parse the JSON file
+			const dataStr = await fs.readFile(FILE_PATH, "utf8");
+			const data = JSON.parse(dataStr);
+
+			// Convert JSON objects into ProjectImpl instances
+			data.projects = data.projects.map((p: Project) => this.restoreProject(p));
+
+			return data;
+		} catch (error) {
+			console.error("Error loading data from file:", error);
+			return { projects: [] };
+		}
 	}
+	//  Helper function: Converts a JSON object into a `ProjectImpl` instance
+	private restoreProject(p: Project): ProjectImpl {
+		const project = new ProjectImpl(p.id, p.name, p.status, p.deadline, p.priority, p.workload);
+		project.timelog = p.timelog || [];
+		project.subprojects = p.subprojects.map(sub => this.restoreProject(sub));
+		return project;
+	}
+
+	async saveData(data: { projects: Project[] }): Promise<void> {
+		try {
+			await fs.writeFile(FILE_PATH, JSON.stringify(data, null, 2), "utf8");
+		} catch (error) {
+			console.error("Error saving data to file:", error);
+		}
+	}
+}
+
+class ProjectImpl implements Project {
+  readonly id: string;
+  name: string;
+  deadline?: string;
+  prio?: number;
+  workload?: number;
+  status: ProjectStatus;
+  timelog: Timelog[];
+  subprojects: Project[];
+
+  constructor(id: string, name: string, status: ProjectStatus, deadline?: string, prio?: number, workload?: number) {
+    this.id = id;
+    this.name = name;
+    this.status = status;
+    this.deadline = deadline;
+    this.prio = prio;
+    this.workload = workload;
+    this.timelog = [];
+    this.subprojects = [];
+  }
+
+  totalTime(): number {
+    const ownTime = this.timelog.reduce((sum, log) => sum + log.time, 0);
+    const subprojectTime = this.subprojects.reduce((sum, sub) => sum + sub.totalTime(), 0);
+    return ownTime + subprojectTime;
+  }
+
+  addTimelog(date: string, time: number, info?: string): void {
+    this.timelog.push({ date, time, info });
+  }
+
+  addSubproject(name: string, status: ProjectStatus): void {
+    if (this.subprojects.length > 0) {
+      throw new Error("Subprojekte dürfen keine eigenen Subprojekte haben!");
+    }
+    const subprojectId = `${this.id}-${this.subprojects.length + 1}`;
+    const subproject = new ProjectImpl(subprojectId, name, status);
+    this.subprojects.push(subproject);
+  }
+}
 
 class UIManager {
     private app: App;
