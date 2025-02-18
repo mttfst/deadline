@@ -1,4 +1,5 @@
-import { App, Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, Modal, SuggestModal, TextComponent} from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, Modal, SuggestModal, TextComponent, DropdownComponent} from 'obsidian';
+import { promises as fs } from "fs";
 import {projectTemplate, subprojectTemplate} from './templates';
 
 // 1. Define the interface for plugin settings
@@ -11,6 +12,31 @@ interface DeadlinePluginSettings {
 	nextProjectId: number;
 }
 
+interface Timelog {
+	date: string;
+	time: number;
+	info?: string;
+}
+
+interface Project {
+  readonly id: string;
+  name: string;
+  deadline?: string;
+  priority?: number;
+  workload?: number;
+  status: ProjectStatus;
+  timelog: Timelog[];
+  subprojects: Project[];
+
+  totalTime(): number;
+}
+
+enum ProjectStatus {
+  Open = "open",
+  InProgress = "in_progress",
+  Done = "done"
+}
+
 // 2. Default values for the settings
 const DEFAULT_SETTINGS: DeadlinePluginSettings = {
 	projectPath: 'Projects',
@@ -21,63 +47,94 @@ const DEFAULT_SETTINGS: DeadlinePluginSettings = {
 	nextProjectId: 1
 };
 
-// 3. Main plugin class
-export default class DeadlinePlugin extends Plugin {
-	settings: DeadlinePluginSettings;
+class SettingsUtils {
+	private plugin: Plugin;
+    settings: DeadlinePluginSettings;
 
-	// Plugin initialization
-	async onload() {
-		console.log('Loading Deadline Plugin...');
-		
-		// Load saved settings or use default values
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    constructor(plugin: Plugin) {
+        this.plugin = plugin;
+    }
 
-		// Ensure project path is formatted correctly
-		if (this.settings.projectPath.startsWith('./')) {
-			this.settings.projectPath = this.settings.projectPath.replace(/^\.\//, '');
-			await this.saveSettings();
+    async loadSettings() {
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.plugin.loadData());
+		await this.checkSettings();
+    }
+
+	async checkSettings() {
+        if (this.settings.projectPath.startsWith('./')) {
+            this.settings.projectPath = this.settings.projectPath.replace(/^\.\//, '');
+            await this.saveSettings();
 		}
-
-		// Add settings tab to the Obsidian interface
-		this.addSettingTab(new DeadlineSettingTab(this.app, this));
-
-		// Register the new project command
-		this.addCommand({
-			id: 'new_project',
-			name: 'Create New Project',
-			callback: async () => {
-		        // new NameInputModal(this.app, 'Enter Project Name', 'Project short name', async (shortName: string) => {
-					// await this.createNewProject(shortName);
-				new NameInputModal(this.app, this.settings, 'Enter Project Details', 'Project short name', async (shortName: string, deadline: string, priority: string, estimatedHours: string) => {
-					await this.createNewProject(shortName, deadline, priority, estimatedHours);
-				}).open();
-			}
-		});
-
-	// Register the new subproject command
-		this.addCommand({
-			id: 'new_subproject',
-			name: 'Create New Subproject',
-			callback: async () => {
-				const projects = this.getProjectList();
-				if (projects.length === 0) {
-					new Notice('No existing projects found.');
-					return;
-				}
-				new SelectProjectModal(this.app, projects, async (mainProject) => {
-					new NameInputModal(this.app, this.settings, 'Enter Subproject Details', 'Subproject name', async (subProjectName: string, deadline: string, priority: string, estimatedHours: string) => {
-						await this.createNewSubProject(mainProject, subProjectName, deadline, priority, estimatedHours);
-					}).open();
-				}).open();
-			}
-		});
 	}
 
-	// Save the current settings
-	async saveSettings() {
-		await this.saveData(this.settings);
+    async saveSettings() {
+        await this.plugin.saveData(this.settings);
+    }
+}
+
+
+			}
 	}
 
+	}
+
+class UIManager {
+    private app: App;
+	private settingsUtils: SettingsUtils;
+    private projectManager: ProjectManager;
+	private settings: DeadlinePluginSettings;
+
+    constructor(app: App, settingsUtils: SettingsUtils, projectManager: ProjectManager) {
+        this.app = app;
+        this.projectManager = projectManager;
+		this.settingsUtils = settingsUtils;
+		this.settings = this.settingsUtils.settings
+    }
+
+    promptNewProject() {
+        new NameInputModal(this.app, this.settings, 'Enter Project Details', 'Project short name', async (shortName: string, deadline: string, priority: string, estimatedHours: string) => {
+            await this.projectManager.createProject(shortName, deadline, priority, estimatedHours);
+        }).open();
+    }
+
+    promptNewSubProject() {
+        const projects = this.projectManager.getProjectList();
+        if (projects.length === 0) {
+            new Notice('No existing projects found.');
+            return;
+        }
+
+        new SelectProjectModal(this.app, projects, async (mainProject) => {
+            new NameInputModal(this.app, this.settings, 'Enter Subproject Details', 'Subproject name', async (subProjectName: string, deadline: string, priority: string, estimatedHours: string) => {
+                await this.projectManager.createProject(subProjectName, deadline, priority, estimatedHours);
+            }).open();
+        }).open();
+    }
+
+    promptLogTime() {
+        const projects = this.projectManager.getProjectList();
+        if (projects.length === 0) {
+            new Notice('No existing projects found.');
+            return;
+        }
+
+        new LogTimeModal(this.app, projects, async (selectedProject, subProject, timeSpent, description) => {
+            // Implement logTime logic separately
+        }).open();
+    }
+}
+
+class ProjectManager {
+    app: App;
+    settingsUtils: SettingsUtils;
+	settings: DeadlinePluginSettings
+
+    constructor(app: App, settingsUtils: SettingsUtils) {
+        this.app = app;
+        this.settingsUtils = settingsUtils;
+		this.settings = this.settingsUtils.settings
+    }	
+	
 	// Get list of existing projects
 	getProjectList(): string[] {
 		const projectFolder = this.app.vault.getFolderByPath(this.settings.projectPath);
@@ -94,80 +151,37 @@ export default class DeadlinePlugin extends Plugin {
 		return projectFolders;
 	}
 
-	// Function to create a new project
-	async createNewProject(shortName: string, deadline: string, priority: string, estimatedHours: string) {
-		const projectId = this.settings.nextProjectId.toString().padStart(3, '0');
-		const folderName = `${shortName}`;
-		const projectFolderPath = `${this.settings.projectPath}/${folderName}`;
-		const projectFileName = `main_${shortName}.md`;
-		const projectFilePath = `${projectFolderPath}/${projectFileName}`;
-		const parsedPriority = parseInt(priority, 10);
-		const parsedHours = parseFloat(estimatedHours);
 
-		console.log('name ',shortName)
-		console.log('deadline ',deadline)
-		console.log('priority ',priority)
-		console.log('estimatedHours ',estimatedHours)
+    async createProject(shortName: string, deadline: string, priority: string, estimatedHours: string) {
+        const projectId = this.settings.nextProjectId.toString().padStart(3, '0');
+        const folderName = `${shortName}`;
+        const projectFolderPath = `${this.settings.projectPath}/${folderName}`;
+        const projectFileName = `main_${shortName}.md`;
+        const projectFilePath = `${projectFolderPath}/${projectFileName}`;
+        // const parsedPriority = this.validatePriority(priority);
+        // const parsedHours = this.validateHours(estimatedHours);
 
-		try {
-			// Create the project folder
-			await this.app.vault.createFolder(projectFolderPath);
+        try {
+            await this.app.vault.createFolder(projectFolderPath);
+            const projectContent = projectTemplate
+                .replace(/\{\{projectId\}\}/g, `'${projectId}'`)
+                .replace(/\{\{projectName\}\}/g, shortName)
+                .replace("{{deadline}}", deadline || "")
+                // .replace("{{priority}}", parsedPriority.toString())
+                // .replace("{{estimatedHours}}", parsedHours.toFixed(1));
 
-			// Load the project template from an external file
-			const projectContent = projectTemplate
-				.replace(/\{\{projectId\}\}/g, `'${projectId}'`)
-				.replace(/\{\{projectName\}\}/g, shortName)
-				.replace("{{deadline}}", deadline !== "" ? deadline : "")
-				.replace("{{priority}}", (!isNaN(parsedPriority) && parsedPriority >= 1 && parsedPriority <= this.settings.priorityLevels) ? parsedPriority.toString() : "1")
-				.replace("{{estimatedHours}}", (!isNaN(parsedHours) && parsedHours >= 0) ? parsedHours.toFixed(1) : "0");
-
-			// Create the new project file with the loaded template
-			const newFile = await this.app.vault.create(projectFilePath, projectContent);
-			await this.app.workspace.getLeaf().openFile(newFile);
-
-			// Increment the project ID
-			this.settings.nextProjectId++;
-			await this.saveSettings();
-
-			new Notice(`New project created: ${folderName}`);
-		} catch (error) {
-			console.error('Failed to create new project:', error);
-			new Notice(`Failed to create new project. ${error.message}`);
-		}
-	}
-
-	async createNewSubProject(mainProject: string, subProjectName: string, deadline: string, priority: string, estimatedHours: string) {
-		const projectFolderPath = `${this.settings.projectPath}/${mainProject}`;
-		const subProjectFiles = (await this.app.vault.adapter.list(projectFolderPath)).files;
-		const subProjectCount = subProjectFiles.filter(file => file.startsWith(`${projectFolderPath}/sub_`)).length;
-		const subProjectId = `${this.settings.nextProjectId.toString().padStart(3, '0')}_${(subProjectCount + 1).toString().padStart(2, '0')}`;
-		const subProjectFileName = `sub_${subProjectName}.md`;
-		const subProjectFilePath = `${projectFolderPath}/${subProjectFileName}`;
-		const parsedPriority = parseInt(priority, 10);
-		const parsedHours = parseFloat(estimatedHours);
-
-		try {
-			// Load the project template and add main project reference
-			const subProjectContent = subprojectTemplate
-				.replace('{{subprojectId}}', subProjectId)
-				.replace('{{subprojectName}}', subProjectName)
-				.replace('{{mainName}}', `main_${mainProject}`)
-				.replace("{{deadline}}", deadline !== "" ? deadline : "")
-				.replace("{{priority}}", (!isNaN(parsedPriority) && parsedPriority >= 1 && parsedPriority <= this.settings.priorityLevels) ? parsedPriority.toString() : "1")
-				.replace("{{estimatedHours}}", (!isNaN(parsedHours) && parsedHours >= 0) ? parsedHours.toFixed(1) : "0");
-
-			// Create the new subproject file
-			const newFile = await this.app.vault.create(subProjectFilePath, subProjectContent);
-			await this.updateMainProjectList(mainProject);
-			await this.app.workspace.getLeaf().openFile(newFile);
+            const newFile = await this.app.vault.create(projectFilePath, projectContent);
+            await this.app.workspace.getLeaf().openFile(newFile);
 
 
-			new Notice(`New subproject created: ${subProjectName} under ${mainProject}`);
-		} catch (error) {
-			console.error('Failed to create new subproject:', error);
-			new Notice(`Failed to create new subproject. ${error.message}`);
-		}
-	}
+            new Notice(`New project created: ${folderName}`);
+        } catch (error) {
+            console.error('Failed to create new project:', error);
+            new Notice(`Failed to create new project. ${error.message}`);
+        }
+    }
+
+
 
 // Function to update the main project note with subproject links
 	async updateMainProjectList(mainProject: string) {
@@ -193,6 +207,49 @@ ${subProjects.join('\n')}`;
 			new Notice('Failed to update main project note. Check console for details.');
 		}
 	}
+
+
+// 3. Main plugin class
+export default class DeadlinePlugin extends Plugin {
+	settingsUtils: SettingsUtils
+    projectManager: ProjectManager;
+    uiManager: UIManager;
+	settings: DeadlinePluginSettings
+
+	// Plugin initialization
+	async onload() {
+		console.log('Loading Deadline Plugin...');
+		this.settingsUtils = new SettingsUtils(this);
+        await this.settingsUtils.loadSettings();
+		this.settings = this.settingsUtils.settings
+		
+		// Add settings tab to the Obsidian interface
+		this.addSettingTab(new DeadlineSettingTab(this.app, this));
+
+
+        this.projectManager = new ProjectManager(this.app, this.settingsUtils);
+        this.uiManager = new UIManager(this.app, this.settingsUtils, this.projectManager);
+
+
+
+		this.addCommand({
+            id: 'new_project',
+            name: 'Create New Project',
+            callback: async () => this.uiManager.promptNewProject()
+        });
+
+        this.addCommand({
+            id: 'new_subproject',
+            name: 'Create New Subproject',
+            callback: async () => this.uiManager.promptNewSubProject()
+        });
+
+        this.addCommand({
+            id: 'log_time',
+            name: 'Log Work Time',
+            callback: async () => this.uiManager.promptLogTime()
+        });
+	}
 }
 
 
@@ -203,7 +260,14 @@ class NameInputModal extends Modal {
 	private settings: DeadlinePluginSettings;
 	private callback: (name: string, deadline: string, priority: string, estimatedHours: string) => void;
 
-	constructor(app: App, settings: DeadlinePluginSettings, title: string, placeholder: string, callback: (name: string, deadline: string, priority: string, estimatedHours: string) => void) {
+	constructor(app: App, 
+				settings: DeadlinePluginSettings, 
+				title: string, 
+				placeholder: string, 
+				callback: (name: string, 
+						   deadline: string, 
+						   priority: string, 
+						   estimatedHours: string) => void) {
 		super(app);
 		this.settings = settings;
 		this.title = title;
@@ -288,14 +352,60 @@ class SelectProjectModal extends SuggestModal<string> {
 	}
 }
 
+// Modal for logging time
+class LogTimeModal extends Modal {
+	private projects: string[];
+	private callback: (project: string, subProject: string, timeSpent: string, description: string) => void;
+
+	constructor(app: App, projects: string[], callback: (project: string, subProject: string, timeSpent: string, description: string) => void) {
+		super(app);
+		this.projects = projects;
+		this.callback = callback;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl('h2', { text: 'Log Work Time' });
+
+		const projectDropdown = new DropdownComponent(contentEl);
+		this.projects.forEach(p => projectDropdown.addOption(p, p));
+
+		const subProjectInput = new TextComponent(contentEl);
+		subProjectInput.setPlaceholder('Subproject (optional)');
+
+		const timeInput = new TextComponent(contentEl);
+		timeInput.setPlaceholder('Time spent in hours');
+
+		const descriptionInput = new TextComponent(contentEl);
+		descriptionInput.setPlaceholder('Work description');
+
+		const submitButton = contentEl.createEl('button', { text: 'Log Time' });
+		submitButton.style.marginTop = '10px';
+
+		submitButton.addEventListener('click', () => {
+			const project = projectDropdown.getValue();
+			const subProject = subProjectInput.getValue().trim();
+			const timeSpent = timeInput.getValue().trim();
+			const description = descriptionInput.getValue().trim();
+			if (project && timeSpent) {
+				this.callback(project, subProject, timeSpent, description);
+				this.close();
+			} else {
+				new Notice('Please fill in required fields.');
+			}
+		});
+	}
+}
 
 // 4. Define the settings tab
 class DeadlineSettingTab extends PluginSettingTab {
 	plugin: DeadlinePlugin;
+	settings: DeadlinePluginSettings
 
 	constructor(app: App, plugin: DeadlinePlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+		this.settings = this.plugin.settingsUtils.settings
 	}
 
 	display(): void {
@@ -312,10 +422,10 @@ class DeadlineSettingTab extends PluginSettingTab {
 			.setDesc('Directory where your projects will be stored.')
 			.addText(text => text
 				.setPlaceholder('./Projects')
-				.setValue(this.plugin.settings.projectPath)
+				.setValue(this.settings.projectPath)
 				.onChange(async (value) => {
-					this.plugin.settings.projectPath = value;
-					await this.plugin.saveSettings();
+					this.settings.projectPath = value;
+					await this.plugin.settingsUtils.saveSettings();
 				}));
 
 		// Working Hours Per Week
@@ -324,10 +434,10 @@ class DeadlineSettingTab extends PluginSettingTab {
 			.setDesc('Total working hours available each week.')
 			.addText(text => text
 				.setPlaceholder('40')
-				.setValue(this.plugin.settings.workingHoursPerWeek.toString())
+				.setValue(this.settings.workingHoursPerWeek.toString())
 				.onChange(async (value) => {
-					this.plugin.settings.workingHoursPerWeek = parseInt(value);
-					await this.plugin.saveSettings();
+					this.settings.workingHoursPerWeek = parseInt(value);
+					await this.plugin.settingsUtils.saveSettings();
 				}));
 
 		// Working Days Per Week
@@ -336,10 +446,10 @@ class DeadlineSettingTab extends PluginSettingTab {
 			.setDesc('Number of working days in a week.')
 			.addText(text => text
 				.setPlaceholder('5')
-				.setValue(this.plugin.settings.workingDaysPerWeek.toString())
+				.setValue(this.settings.workingDaysPerWeek.toString())
 				.onChange(async (value) => {
-					this.plugin.settings.workingDaysPerWeek = parseInt(value);
-					await this.plugin.saveSettings();
+					this.settings.workingDaysPerWeek = parseInt(value);
+					await this.plugin.settingsUtils.saveSettings();
 				}));
 
 		// Priority Levels
@@ -348,10 +458,10 @@ class DeadlineSettingTab extends PluginSettingTab {
 			.setDesc('Number of priority levels for your projects.')
 			.addText(text => text
 				.setPlaceholder('3')
-				.setValue(this.plugin.settings.priorityLevels.toString())
+				.setValue(this.settings.priorityLevels.toString())
 				.onChange(async (value) => {
-					this.plugin.settings.priorityLevels = parseInt(value);
-					await this.plugin.saveSettings();
+					this.settings.priorityLevels = parseInt(value);
+					await this.plugin.settingsUtils.saveSettings();
 				}));
 
 		// Priority Split
@@ -360,10 +470,10 @@ class DeadlineSettingTab extends PluginSettingTab {
 			.setDesc('Percentage of time allocated to each priority level (e.g., 50,35,15).')
 			.addText(text => text
 				.setPlaceholder('50,35,15')
-				.setValue(this.plugin.settings.prioritySplit.join(','))
+				.setValue(this.settings.prioritySplit.join(','))
 				.onChange(async (value) => {
-					this.plugin.settings.prioritySplit = value.split(',').map(Number);
-					await this.plugin.saveSettings();
+					this.settings.prioritySplit = value.split(',').map(Number);
+					await this.plugin.settingsUtils.saveSettings();
 				}));
 	}
 }
