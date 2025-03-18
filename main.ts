@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, Modal, SuggestModal, TextComponent, DropdownComponent} from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, Modal, SuggestModal, TextComponent, DropdownComponent, EventRef} from 'obsidian';
 // import * as fs from "fs";
 import { promises as fs } from "fs";
 import {projectTemplate, subprojectTemplate} from './templates';
@@ -143,6 +143,136 @@ class JsonUtils {
 			console.error("Error saving data to file:", error);
 		}
 	}
+}
+
+class ProjectSync {
+	private app: App;
+	private cachedYamlData: Map<string, string> = new Map();
+
+	constructor(app: App) {
+		this.app = app;
+	}
+
+	async syncProjectFromYaml(file: TFile) {
+		const cache = this.app.metadataCache.getFileCache(file);
+		if (!cache?.frontmatter) return;
+
+		const updatedId = cache.frontmatter.id;
+
+		const data = await JsonUtils.loadData();
+		// console.log(data)
+		// console.log(file.path)
+		// const project = data.projects.find(p => file.path.includes(p.file));
+		const project = this.findProjectByPath(data.projects, file.path);
+		// console.log(project)
+
+
+		if (!project) {
+			// new Notice(`Projekt mit Datei ${file.path} nicht gefunden.`);
+			return;
+		}
+
+		if (updatedId !== project.id) {
+			new Notice(`ID-Änderung nicht erlaubt. Setze ID auf ${project.id} zurück.`);
+			await this.restoreYamlId(file, project.id);
+			return;
+		}
+
+		const updatedData: Partial<ProjectData> = {
+			id: project.id, // Direkt aus JSON, nicht aus YAML!
+			name: cache.frontmatter.name,
+			deadline: cache.frontmatter.deadline,
+			priority: cache.frontmatter.priority,
+			workload: cache.frontmatter.workload,
+			status: cache.frontmatter.status as ProjectStatus
+		};
+
+		const updated = this.updateProject(project, updatedData);
+
+		if (updated) {
+			await JsonUtils.saveData(data);
+			new Notice(`Projekt "${project.name}" erfolgreich aktualisiert.`);
+		}
+	}
+
+	async restoreYamlId(file: TFile, correctId: string) {
+		let content = await this.app.vault.read(file);
+		const newContent = content.replace(/^id: .*/m, `id: "${correctId}"`);
+		await this.app.vault.modify(file, newContent);
+	}
+
+	async handleFileRename(file: TFile, oldPath: string) {
+		const data = await JsonUtils.loadData();
+		
+
+		console.log(`handle raname for ${oldPath}`)
+		const project = this.findProjectByPath(data.projects, oldPath);
+		console.log(project)
+		if (!project) {
+			console.log(`Project with path "${oldPath}" not found`);
+			return;
+		}
+
+		console.log(`hier wird jetzt die json überschieben ${project.file} wird zu ${file.path}`)
+
+		project.file = file.path;
+		project.path = file.parent?.path || "";
+
+		await JsonUtils.saveData(data);
+	}
+
+	findProjectByPath(projects: Project[], path: string): Project | undefined {
+		console.log(`find project by path, ${path}`)
+		console.log(projects)
+		for (const project of projects) {
+			if (project.file === path) {
+				return project;
+			}
+			if (project.subprojects.length > 0) {
+				const subproject = this.findProjectByPath(project.subprojects, path);
+				if (subproject) return subproject;
+			}
+		}
+		return undefined;
+	}
+
+	// Optional: Beim Öffnen einer Datei den aktuellen YAML-Header cachen
+	cacheYamlData(file: TFile) {
+		const cache = this.app.metadataCache.getFileCache(file);
+		if (cache?.frontmatter?.tags?.includes('deadline')) {
+			this.cachedYamlData.set(file.path, JSON.stringify(cache.frontmatter));
+		}
+	}
+
+	// Hilfsfunktion für die Übernahme von Werten aus updatedData
+	updateProject(project: ProjectData, updatedData: Partial<ProjectData>): boolean {
+		let updated = false;
+
+		if (updatedData.name !== undefined && updatedData.name !== project.name) {
+			project.name = updatedData.name;
+			updated = true;
+		}
+		if (updatedData.deadline !== undefined && updatedData.deadline !== project.deadline) {
+			project.deadline = updatedData.deadline;
+			updated = true;
+		}
+		if (updatedData.priority !== undefined && updatedData.priority !== project.priority) {
+			project.priority = updatedData.priority;
+			updated = true;
+		}
+		if (updatedData.workload !== undefined && updatedData.workload !== project.workload) {
+			project.workload = updatedData.workload;
+			updated = true;
+		}
+		if (updatedData.status !== undefined && updatedData.status !== project.status) {
+			project.status = updatedData.status;
+			updated = true;
+		}
+
+		return updated;
+	}
+
+
 }
 
 class ProjectImpl implements Project {
@@ -383,6 +513,8 @@ class ProjectManager {
 			`priority: ${projectData.priority}`,
 			`workload: ${projectData.workload}`,
 			`status: ${projectData.status}`,
+			"tags:",
+            "  - deadline",		
 			"---"
 		].filter(Boolean); 
 
@@ -417,44 +549,99 @@ ${subProjects.join('\n')}`;
 // 3. Main plugin class
 export default class DeadlinePlugin extends Plugin {
 	settingsUtils: SettingsUtils
-    projectManager: ProjectManager;
-    uiManager: UIManager;
+	projectManager: ProjectManager;
+	uiManager: UIManager;
 	settings: DeadlinePluginSettings;
 	jsonUtils: JsonUtils;
+
+	private projectSync: ProjectSync;
+
+
+	private renameHandler: EventRef;
+	private modifyHandler: EventRef;
+	private queue = Promise.resolve();
+
+
 
 	// Plugin initialization
 	async onload() {
 		console.log('Loading Deadline Plugin...');
 		this.settingsUtils = new SettingsUtils(this);
-        await this.settingsUtils.loadSettings();
+		await this.settingsUtils.loadSettings();
 		this.settings = this.settingsUtils.settings
-		
+
 		// Add settings tab to the Obsidian interface
 		this.addSettingTab(new DeadlineSettingTab(this.app, this));
 
-        this.projectManager = new ProjectManager(this.app, this.settingsUtils);
-        this.uiManager = new UIManager(this.app, this.settingsUtils, this.projectManager);
+		this.projectManager = new ProjectManager(this.app, this.settingsUtils);
+		this.uiManager = new UIManager(this.app, this.settingsUtils, this.projectManager);
+		this.projectSync = new ProjectSync(this.app);
 
 
 
 		this.addCommand({
-            id: 'new_project',
-            name: 'Create New Project',
-            callback: async () => this.uiManager.promptNewProject()
-        });
+			id: 'new_project',
+			name: 'Create New Project',
+			callback: async () => this.uiManager.promptNewProject()
+		});
 
-        this.addCommand({
-            id: 'new_subproject',
-            name: 'Create New Subproject',
-            callback: async () => this.uiManager.promptNewSubProject()
-        });
+		this.addCommand({
+			id: 'new_subproject',
+			name: 'Create New Subproject',
+			callback: async () => this.uiManager.promptNewSubProject()
+		});
 
-        this.addCommand({
-            id: 'log_time',
-            name: 'Log Work Time',
-            callback: async () => this.uiManager.promptLogTime()
-        });
-	}
+		this.addCommand({
+			id: 'log_time',
+			name: 'Log Work Time',
+			callback: async () => this.uiManager.promptLogTime()
+		});
+
+		this.app.workspace.on('file-open', (file) => {
+			if (file instanceof TFile) {
+				const cache = this.app.metadataCache.getFileCache(file);
+				if (cache?.frontmatter?.tags?.includes('deadline')) {
+					this.projectSync.cacheYamlData(file);
+				}
+			}
+		});
+
+		this.modifyHandler = this.app.metadataCache.on('changed', async (file) => {
+			if (file instanceof TFile) {
+				console.log(`modify file ${file}`)
+				const cache = this.app.metadataCache.getFileCache(file);
+				if (cache?.frontmatter?.tags?.includes('deadline')) {
+					console.log(`modify deadlinefile ${file}`)
+					await this.projectSync.syncProjectFromYaml(file);
+				}
+			}
+		});
+
+
+		this.renameHandler = this.app.vault.on('rename', async (file, oldPath) => {
+			if (file instanceof TFile) {
+				console.log(`rename folder of file ${file.path}`)
+				// console.log(file)
+				const cache = this.app.metadataCache.getFileCache(file);
+				if (cache?.frontmatter?.tags?.includes('deadline')) {
+					this.queue = this.queue.then(async () => {
+						console.log(`Starte Verarbeitung für ${file.path}`);
+						await this.projectSync.handleFileRename(file, oldPath);
+						console.log(`Verarbeitung abgeschlossen für ${file.path}`);
+					}).catch(err => {
+						console.error(`Fehler bei der Verarbeitung von ${file.path}:`, err);
+					})
+				;}
+			}
+		});
+
+	;}
+		onunload() {
+			console.log('Unloading Deadline Plugin...');
+
+			this.app.vault.offref(this.renameHandler);
+			this.app.metadataCache.offref(this.modifyHandler);
+		}
 }
 
 
