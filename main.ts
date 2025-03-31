@@ -1,7 +1,7 @@
-import { App, Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, Modal, SuggestModal, TextComponent, DropdownComponent, EventRef} from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, Notice, TFile, TFolder, Modal, SuggestModal, TextComponent, DropdownComponent, EventRef } from 'obsidian';
 // import * as fs from "fs";
 import { promises as fs } from "fs";
-import {projectTemplate, subprojectTemplate} from './templates';
+import { projectTemplate, subprojectTemplate } from './templates';
 
 
 // const FILE_PATH = "/Users/Faust/Project/deadline/projects.json";
@@ -29,10 +29,10 @@ interface Timelog {
 interface ProjectData {
 	id: string;
 	name: string;
-    path?: string;
+	path?: string;
 	file?: string;
 	deadline?: string;
-	priority?: number;
+	priority?: ProjectPriority;
 	workload?: number;
 	status: ProjectStatus;
 }
@@ -43,7 +43,7 @@ interface Project {
 	path: string;
 	file: string;
 	deadline?: string;
-	priority?: number;
+	priority?: ProjectPriority;
 	workload?: number;
 	status: ProjectStatus;
 	timelog: Timelog[];
@@ -58,6 +58,13 @@ enum ProjectStatus {
 	Done = "done"
 }
 
+enum ProjectPriority {
+	High = "High",
+	Medium = "Medium",
+	Low = "Low",
+	None = "None",
+}
+
 // 2. Default values for the settings
 const DEFAULT_SETTINGS: DeadlinePluginSettings = {
 	projectPath: 'Projects',
@@ -70,27 +77,27 @@ const DEFAULT_SETTINGS: DeadlinePluginSettings = {
 
 class SettingsUtils {
 	private plugin: Plugin;
-    settings: DeadlinePluginSettings;
+	settings: DeadlinePluginSettings;
 
-    constructor(plugin: Plugin) {
-        this.plugin = plugin;
-    }
+	constructor(plugin: Plugin) {
+		this.plugin = plugin;
+	}
 
-    async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.plugin.loadData());
+	async loadSettings() {
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.plugin.loadData());
 		await this.checkSettings();
-    }
+	}
 
 	async checkSettings() {
-        if (this.settings.projectPath.startsWith('./')) {
-            this.settings.projectPath = this.settings.projectPath.replace(/^\.\//, '');
-            await this.saveSettings();
+		if (this.settings.projectPath.startsWith('./')) {
+			this.settings.projectPath = this.settings.projectPath.replace(/^\.\//, '');
+			await this.saveSettings();
 		}
 	}
 
-    async saveSettings() {
-        await this.plugin.saveData(this.settings);
-    }
+	async saveSettings() {
+		await this.plugin.saveData(this.settings);
+	}
 }
 
 
@@ -128,7 +135,7 @@ class JsonUtils {
 			file: p.file,
 			deadline: p.deadline,
 			priority: p.priority,
-			workload: p.workload ,
+			workload: p.workload,
 		}
 		const project = new ProjectImpl(projectData);
 		project.timelog = p.timelog || [];
@@ -203,7 +210,7 @@ class ProjectSync {
 
 	async handleFileRename(file: TFile, oldPath: string) {
 		const data = await JsonUtils.loadData();
-		
+
 
 		console.log(`handle raname for ${oldPath}`)
 		const project = this.findProjectByPath(data.projects, oldPath);
@@ -276,29 +283,29 @@ class ProjectSync {
 }
 
 class ProjectImpl implements Project {
-  readonly id: string;
-  name: string;
-  path: string;
-  file: string;
-  deadline?: string;
-  priority?: number;
-  workload?: number;
-  status: ProjectStatus;
-  timelog: Timelog[];
-  subprojects: Project[];
+	readonly id: string;
+	name: string;
+	path: string;
+	file: string;
+	deadline?: string;
+	priority?: ProjectPriority;
+	workload?: number;
+	status: ProjectStatus;
+	timelog: Timelog[];
+	subprojects: Project[];
 
-  constructor(projectData: ProjectData) {
-    this.id = projectData.id;
-    this.name = projectData.name;
-    this.path = projectData.path || "";
-    this.file = projectData.file || "";
-    this.status = projectData.status;
-    this.deadline = projectData.deadline || "";
-    this.priority = projectData.priority || 1;
-    this.workload = projectData.workload || 0;
-    this.timelog = [];
-    this.subprojects = [];
-  }
+	constructor(projectData: ProjectData) {
+		this.id = projectData.id;
+		this.name = projectData.name;
+		this.path = projectData.path || "";
+		this.file = projectData.file || "";
+		this.status = projectData.status;
+		this.deadline = projectData.deadline || "";
+		this.priority = projectData.priority || ProjectPriority.Medium;
+		this.workload = projectData.workload || 0;
+		this.timelog = [];
+		this.subprojects = [];
+	}
 
   totalTime(): number {
     const ownTime = this.timelog.reduce((sum, log) => sum + log.time, 0);
@@ -321,126 +328,126 @@ class ProjectImpl implements Project {
 }
 
 class UIManager {
-    private app: App;
+	private app: App;
 	private settingsUtils: SettingsUtils;
-    private projectManager: ProjectManager;
+	private projectManager: ProjectManager;
 	private settings: DeadlinePluginSettings;
 
-    constructor(app: App, settingsUtils: SettingsUtils, projectManager: ProjectManager) {
-        this.app = app;
-        this.projectManager = projectManager;
+	constructor(app: App, settingsUtils: SettingsUtils, projectManager: ProjectManager) {
+		this.app = app;
+		this.projectManager = projectManager;
 		this.settingsUtils = settingsUtils;
 		this.settings = this.settingsUtils.settings
-    }
+	}
 
-    promptNewProject() {
-        new NameInputModal(this.app, this.settings, async (projectData: ProjectData) => {
-            await this.projectManager.createProject(projectData);
-        }).open();
-    }
+	promptNewProject() {
+		new NameInputModal(this.app, this.settings, async (projectData: ProjectData) => {
+			await this.projectManager.createProject(projectData);
+		}).open();
+	}
 
-    async promptNewSubProject() {
-        const projects = await this.projectManager.getProjectList();
-        if (projects.length === 0) {
-            new Notice('No existing projects found.');
-            return;
-        }
+	async promptNewSubProject() {
+		const projects = await this.projectManager.getProjectList();
+		if (projects.length === 0) {
+			new Notice('No existing projects found.');
+			return;
+		}
 
-        new SelectProjectModal(this.app, projects, async (mainProject) => {
+		new SelectProjectModal(this.app, projects, async (mainProject) => {
 			const mainProjectId = mainProject.split(" ")[0]
-            new NameInputModal(this.app, this.settings, async (projectData:ProjectData) => {
-                await this.projectManager.createProject(projectData, mainProjectId);
-            }).open();
-        }).open();
-    }
+			new NameInputModal(this.app, this.settings, async (projectData: ProjectData) => {
+				await this.projectManager.createProject(projectData, mainProjectId);
+			}).open();
+		}).open();
+	}
 
-    async promptLogTime() {
-        const projects = await this.projectManager.getProjectList();
-        if (projects.length === 0) {
-            new Notice('No existing projects found.');
-            return;
-        }
+	async promptLogTime() {
+		const projects = await this.projectManager.getProjectList();
+		if (projects.length === 0) {
+			new Notice('No existing projects found.');
+			return;
+		}
 
-        new LogTimeModal(this.app, projects, async (selectedProject, subProject, timeSpent, description) => {
-            // Implement logTime logic separately
-        }).open();
-    }
+		new LogTimeModal(this.app, projects, async (selectedProject, subProject, timeSpent, description) => {
+			// Implement logTime logic separately
+		}).open();
+	}
 }
 
 class ProjectManager {
-    app: App;
-    settingsUtils: SettingsUtils;
+	app: App;
+	settingsUtils: SettingsUtils;
 	settings: DeadlinePluginSettings;
-	
-    constructor(app: App, settingsUtils: SettingsUtils) {
-        this.app = app;
-        this.settingsUtils = settingsUtils;
+
+	constructor(app: App, settingsUtils: SettingsUtils) {
+		this.app = app;
+		this.settingsUtils = settingsUtils;
 		this.settings = this.settingsUtils.settings;
-    }	
-	
+	}
+
 	// Get list of existing projects
 	async getProjectList(): Promise<string[]> {
 		const data = await JsonUtils.loadData();
 
 		if (!data.projects || !Array.isArray(data.projects)) {
-            new Notice('No projects found in JSON data.');
-            return [];
+			new Notice('No projects found in JSON data.');
+			return [];
 		}
 
 		const projectNames = data.projects.map((project: any) => `${project.id} ${project.name}`);
 		return projectNames;
 	}
 
-   async newProjectID(mainProjectId?:string): Promise<string> {
-	   const projectCount = await this.countProjects(mainProjectId ?? "")
-	   let newID: string = (projectCount + 1).toString(); 
-	   
-	   if (mainProjectId) {
-		   newID = `${mainProjectId}-${newID}`;
-	   }
+	async newProjectID(mainProjectId?: string): Promise<string> {
+		const projectCount = await this.countProjects(mainProjectId ?? "")
+		let newID: string = (projectCount + 1).toString();
 
-	   return newID;
-   }
+		if (mainProjectId) {
+			newID = `${mainProjectId}-${newID}`;
+		}
 
-   async countProjects(projectId: string): Promise<number> {
-	   const data = await JsonUtils.loadData();
-	   let projectCount : number = 0
+		return newID;
+	}
 
-	   if (!projectId) {
-		   projectCount = data.projects.length
-	   }
+	async countProjects(projectId: string): Promise<number> {
+		const data = await JsonUtils.loadData();
+		let projectCount: number = 0
 
-	   const mainProject = data.projects.find((p: any) => p.id === projectId);
-	   if (mainProject) {
-		   projectCount = mainProject.subprojects.length
-	   }
+		if (!projectId) {
+			projectCount = data.projects.length
+		}
 
-	   return projectCount
-   }
+		const mainProject = data.projects.find((p: any) => p.id === projectId);
+		if (mainProject) {
+			projectCount = mainProject.subprojects.length
+		}
+
+		return projectCount
+	}
 
 
 
-    async createProject(projectData: ProjectData, mainProjectId?: string) {
-        const projectId = await this.newProjectID(mainProjectId)
+	async createProject(projectData: ProjectData, mainProjectId?: string) {
+		const projectId = await this.newProjectID(mainProjectId)
 		projectData.id = projectId
 
 		const projectPath = await this.createProjectFolder(projectData, mainProjectId)
-		projectData.path = projectPath	
+		projectData.path = projectPath
 
-		const projectFile = await this.createProjectFile(projectData,mainProjectId)
+		const projectFile = await this.createProjectFile(projectData, mainProjectId)
 		projectData.file = projectFile
 
 		console.log(projectData)
 
 
 		// New Main Project
-		if (!mainProjectId) { 
+		if (!mainProjectId) {
 			const data = await JsonUtils.loadData();
 			const project = new ProjectImpl(projectData);
 			data.projects.push(project);
 			await JsonUtils.saveData(data)
 		}
-		
+
 		// New Sub-Project
 		if (mainProjectId) {
 			const data = await JsonUtils.loadData();
@@ -457,10 +464,10 @@ class ProjectManager {
     }
 
 	async createProjectFolder(projectData: ProjectData, mainProjectId?: string): Promise<string> {
-		const prefix = this.settings.dirPrefix.replace('{{id}}', `${projectData.id}`) 
+		const prefix = this.settings.dirPrefix.replace('{{id}}', `${projectData.id}`)
 		let dirName = `${projectData.name}`
 
-		if (prefix){
+		if (prefix) {
 			dirName = `${prefix}-${projectData.name}`
 		}
 
@@ -471,7 +478,7 @@ class ProjectManager {
 			const mainProject = data.projects.find(p => p.id === mainProjectId);
 			path = `${mainProject?.path}/${dirName}`
 		}
-	
+
 		await this.app.vault.createFolder(path);
 
 		return path
@@ -494,8 +501,8 @@ class ProjectManager {
 
 	async makeYamlHeader(projectData: ProjectData, mainProjectId?: string): Promise<string> {
 
-	
-		let mainFile = "" 
+
+		let mainFile = ""
 
 		if (mainProjectId) {
 			const data = await JsonUtils.loadData();
@@ -509,18 +516,18 @@ class ProjectManager {
 			`id: "${projectData.id}"`,
 			`name: ${projectData.name}`,
 			mainProjectId ? `link: "[[${mainFile}]]"` : "",
-		    `deadline: ${projectData.deadline}`,	
+			`deadline: ${projectData.deadline}`,
 			`priority: ${projectData.priority}`,
 			`workload: ${projectData.workload}`,
 			`status: ${projectData.status}`,
 			"tags:",
-            "  - deadline",		
+			"  - deadline",
 			"---"
-		].filter(Boolean); 
+		].filter(Boolean);
 
-		return lines.join("\n"); 
+		return lines.join("\n");
 	}
-// Function to update the main project note with subproject links
+	// Function to update the main project note with subproject links
 	async updateMainProjectList(mainProject: string) {
 		const projectFolderPath = `${this.settings.projectPath}/${mainProject}`;
 		const projectFilePath = `${projectFolderPath}/main_${mainProject}.md`;
@@ -631,17 +638,19 @@ export default class DeadlinePlugin extends Plugin {
 					}).catch(err => {
 						console.error(`Fehler bei der Verarbeitung von ${file.path}:`, err);
 					})
-				;}
+						;
+				}
 			}
 		});
 
-	;}
-		onunload() {
-			console.log('Unloading Deadline Plugin...');
+		;
+	}
+	onunload() {
+		console.log('Unloading Deadline Plugin...');
 
-			this.app.vault.offref(this.renameHandler);
-			this.app.metadataCache.offref(this.modifyHandler);
-		}
+		this.app.vault.offref(this.renameHandler);
+		this.app.metadataCache.offref(this.modifyHandler);
+	}
 }
 
 
@@ -651,9 +660,9 @@ class NameInputModal extends Modal {
 	// private callback: (name: string, deadline: string, priority: string, estimatedHours: string) => void;
 	private callback: (projectData: ProjectData) => void;
 
-	constructor(app: App, 
-				settings: DeadlinePluginSettings, 
-				callback: (projectData: ProjectData) => void) {
+	constructor(app: App,
+		settings: DeadlinePluginSettings,
+		callback: (projectData: ProjectData) => void) {
 		super(app);
 		this.settings = settings;
 		this.callback = callback;
@@ -670,13 +679,19 @@ class NameInputModal extends Modal {
 
 		contentEl.createEl('h4', { text: 'Deadline (optional)' });
 		const deadlineEl = new TextComponent(contentEl);
-        deadlineEl.inputEl.type = "date";  
-        deadlineEl.inputEl.style.width = '100%';
+		deadlineEl.inputEl.type = "date";
+		deadlineEl.inputEl.style.width = '100%';
 
 		contentEl.createEl('h4', { text: 'Priority Level (optional)' });
-		const priorityEl = new TextComponent(contentEl);
-		priorityEl.inputEl.style.width = '100%';
-		priorityEl.setPlaceholder(`1 - High, ${this.settings.priorityLevels.toString()} - Low`);
+		const priorityEl = new DropdownComponent(contentEl);
+		priorityEl.selectEl.style.width = '100%';
+		priorityEl.addOption(ProjectPriority.High, "High");
+		priorityEl.addOption(ProjectPriority.Medium, "Medium");
+		priorityEl.addOption(ProjectPriority.Low, "Low");
+		priorityEl.addOption(ProjectPriority.None, "None");
+		priorityEl.setValue(ProjectPriority.Medium); // default selection
+
+
 
 		contentEl.createEl('h4', { text: 'Work Load (optional)' });
 		const estimatedHoursEl = new TextComponent(contentEl);
@@ -688,11 +703,11 @@ class NameInputModal extends Modal {
 
 		const submit = () => {
 			const projectData: ProjectData = {
-				id : "",
-				name : inputEl.getValue().trim(),
-			    deadline : deadlineEl.getValue().trim(),
-			    priority : parseInt(priorityEl.getValue()) || 1,
-			    workload : parseFloat(estimatedHoursEl.getValue().trim()) || 0,
+				id: "",
+				name: inputEl.getValue().trim(),
+				deadline: deadlineEl.getValue().trim(),
+				priority: priorityEl.getValue() as ProjectPriority,
+				workload: parseFloat(estimatedHoursEl.getValue().trim()) || 0,
 				status: ProjectStatus.Open,
 			}
 			if (projectData.name) {
