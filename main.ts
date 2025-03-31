@@ -307,24 +307,16 @@ class ProjectImpl implements Project {
 		this.subprojects = [];
 	}
 
-  totalTime(): number {
-    const ownTime = this.timelog.reduce((sum, log) => sum + log.time, 0);
-    const subprojectTime = this.subprojects.reduce((sum, sub) => sum + sub.totalTime(), 0);
-    return ownTime + subprojectTime;
-  }
+	totalTime(): number {
+		const ownTime = this.timelog.reduce((sum, log) => sum + log.time, 0);
+		const subprojectTime = this.subprojects.reduce((sum, sub) => sum + sub.totalTime(), 0);
+		return ownTime + subprojectTime;
+	}
 
-  addTimelog(date: string, time: number, info?: string): void {
-    this.timelog.push({ date, time, info });
-  }
+	addTimelog(date: string, time: number, info?: string): void {
+		this.timelog.push({ date, time, info });
+	}
 
-  // addSubproject(name: string, status: ProjectStatus): void {
-  //   if (this.subprojects.length > 0) {
-  //     throw new Error("Subprojekte dürfen keine eigenen Subprojekte haben!");
-  //   }
-  //   const subprojectId = `${this.id}-${this.subprojects.length + 1}`;
-  //   const subproject = new ProjectImpl(subprojectId, name, status);
-  //   this.subprojects.push(subproject);
-  // }
 }
 
 class UIManager {
@@ -353,23 +345,26 @@ class UIManager {
 			return;
 		}
 
-		new SelectProjectModal(this.app, projects, async (mainProject) => {
-			const mainProjectId = mainProject.split(" ")[0]
+		new SelectProjectModal(this.app, projects, async (projectId) => {
 			new NameInputModal(this.app, this.settings, async (projectData: ProjectData) => {
-				await this.projectManager.createProject(projectData, mainProjectId);
+				await this.projectManager.createProject(projectData, projectId);
 			}).open();
 		}).open();
 	}
 
 	async promptLogTime() {
-		const projects = await this.projectManager.getProjectList();
+		const projects = await this.projectManager.getAllProjectList();
 		if (projects.length === 0) {
 			new Notice('No existing projects found.');
 			return;
 		}
 
-		new LogTimeModal(this.app, projects, async (selectedProject, subProject, timeSpent, description) => {
-			// Implement logTime logic separately
+		new SelectProjectModal(this.app, projects, async (projectId) => {
+			new LogTimeModal(this.app, async (timeSpent, description) => {
+				console.log(projectId, timeSpent, description)
+				// 	// Implement logTime logic separately
+				await this.projectManager.logTime(projectId, timeSpent, description)
+			}).open();
 		}).open();
 	}
 }
@@ -398,6 +393,43 @@ class ProjectManager {
 		return projectNames;
 	}
 
+	async getAllProjectList(): Promise<string[]> {
+		const data = await JsonUtils.loadData();
+
+		if (!data.projects || !Array.isArray(data.projects)) {
+			new Notice('No projects found in JSON data.');
+			return [];
+		}
+
+		const result: string[] = [];
+
+		const collectProjects = (project: any, depth = 0) => {
+			const indent = "  ".repeat(depth);
+			result.push(`${indent}${project.id} ${project.name}`);
+			if (Array.isArray(project.subprojects)) {
+				for (const sub of project.subprojects) {
+					collectProjects(sub, depth + 1);
+				}
+			}
+		};
+
+		for (const project of data.projects) {
+			collectProjects(project);
+		}
+
+		return result;
+	}
+
+	findProjectById(projects: Project[], id: string): Project | undefined {
+		for (const project of projects) {
+			if (project.id === id) return project;
+			if (project.subprojects?.length) {
+				const found = this.findProjectById(project.subprojects, id);
+				if (found) return found;
+			}
+		}
+		return undefined;
+	}
 	async newProjectID(mainProjectId?: string): Promise<string> {
 		const projectCount = await this.countProjects(mainProjectId ?? "")
 		let newID: string = (projectCount + 1).toString();
@@ -424,8 +456,6 @@ class ProjectManager {
 
 		return projectCount
 	}
-
-
 
 	async createProject(projectData: ProjectData, mainProjectId?: string) {
 		const projectId = await this.newProjectID(mainProjectId)
@@ -460,8 +490,7 @@ class ProjectManager {
 			await JsonUtils.saveData(data)
 		}
 
-
-    }
+	}
 
 	async createProjectFolder(projectData: ProjectData, mainProjectId?: string): Promise<string> {
 		const prefix = this.settings.dirPrefix.replace('{{id}}', `${projectData.id}`)
@@ -487,9 +516,8 @@ class ProjectManager {
 	async createProjectFile(projectData: ProjectData, mainProjectId?: string) {
 		const projectFile = `${projectData.path}/${projectData.id}-${projectData.name}.md`
 
-
 		const yamlHeader = await this.makeYamlHeader(projectData, mainProjectId)
-		
+
 
 		const newFile = await this.app.vault.create(projectFile, yamlHeader);
 		await this.app.workspace.getLeaf().openFile(newFile);
@@ -527,6 +555,8 @@ class ProjectManager {
 
 		return lines.join("\n");
 	}
+
+
 	// Function to update the main project note with subproject links
 	async updateMainProjectList(mainProject: string) {
 		const projectFolderPath = `${this.settings.projectPath}/${mainProject}`;
@@ -551,6 +581,41 @@ ${subProjects.join('\n')}`;
 			new Notice('Failed to update main project note. Check console for details.');
 		}
 	}
+
+	async logTime(projectId: string, timeSpent: string, description: string) {
+		const data = await JsonUtils.loadData();
+		const project = this.findProjectById(data.projects, projectId);
+
+		if (!project) {
+			new Notice(`Projekt mit ID "${projectId}" nicht gefunden.`);
+			return;
+		}
+		const timeStamp = this.getLocalTimestamp();
+
+		project.timelog.push({
+			date: timeStamp,  // angepasst an dein Timelog-Interface
+			time: parseFloat(timeSpent),
+			info: description
+		});
+
+		await JsonUtils.saveData(data);
+		new Notice(`Added Timelog to Project "${project.name}".`);
+	}
+	getLocalTimestamp(): string {
+		const now = new Date();
+
+		const year = now.getFullYear();
+		const month = String(now.getMonth() + 1).padStart(2, '0'); // Monate 0-11
+		const day = String(now.getDate()).padStart(2, '0');
+
+		const hours = String(now.getHours()).padStart(2, '0');
+		const minutes = String(now.getMinutes()).padStart(2, '0');
+
+		return `${year}${month}${day} ${hours}:${minutes}`;
+	}
+
+}
+
 
 
 // 3. Main plugin class
@@ -751,30 +816,23 @@ class SelectProjectModal extends SuggestModal<string> {
 
 	// Handle user selection
 	onChooseSuggestion(item: string, evt: MouseEvent | KeyboardEvent) {
-		this.callback(item);
+		this.callback(item.trimStart().split(" ")[0]);
 	}
 }
 
 // Modal for logging time
 class LogTimeModal extends Modal {
 	private projects: string[];
-	private callback: (project: string, subProject: string, timeSpent: string, description: string) => void;
+	private callback: (timeSpent: string, description: string) => void;
 
-	constructor(app: App, projects: string[], callback: (project: string, subProject: string, timeSpent: string, description: string) => void) {
+	constructor(app: App, callback: (timeSpent: string, description: string) => void) {
 		super(app);
-		this.projects = projects;
 		this.callback = callback;
 	}
 
 	onOpen() {
 		const { contentEl } = this;
 		contentEl.createEl('h2', { text: 'Log Work Time' });
-
-		const projectDropdown = new DropdownComponent(contentEl);
-		this.projects.forEach(p => projectDropdown.addOption(p, p));
-
-		const subProjectInput = new TextComponent(contentEl);
-		subProjectInput.setPlaceholder('Subproject (optional)');
 
 		const timeInput = new TextComponent(contentEl);
 		timeInput.setPlaceholder('Time spent in hours');
@@ -786,12 +844,10 @@ class LogTimeModal extends Modal {
 		submitButton.style.marginTop = '10px';
 
 		submitButton.addEventListener('click', () => {
-			const project = projectDropdown.getValue();
-			const subProject = subProjectInput.getValue().trim();
 			const timeSpent = timeInput.getValue().trim();
 			const description = descriptionInput.getValue().trim();
-			if (project && timeSpent) {
-				this.callback(project, subProject, timeSpent, description);
+			if (timeSpent) {
+				this.callback(timeSpent, description);
 				this.close();
 			} else {
 				new Notice('Please fill in required fields.');
