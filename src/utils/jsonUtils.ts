@@ -7,6 +7,7 @@ const FILE_PATH = "/Users/Faust/Documents/Arbeit/Testvalut2/projects.json";
 
 export class JsonUtils {
 	public static async loadData(): Promise<{ projects: ProjectImpl[] }> {
+		console.log("loadData()");
 		try {
 			// Check if the file exists, otherwise create an empty one
 			try {

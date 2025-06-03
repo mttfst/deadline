@@ -1,6 +1,7 @@
 import { App, Notice, TFile } from "obsidian";
 
 import { DeadlinePluginSettings, Project, ProjectData } from "../types/types";
+import { ProjectCache } from "../data/cache";
 import { JsonUtils } from "../utils/jsonUtils";
 import { ProjectImpl } from "../project/projectImpl";
 import { SettingsUtils } from "../ui/settings";
@@ -9,35 +10,31 @@ export class ProjectManager {
 	app: App;
 	settingsUtils: SettingsUtils;
 	settings: DeadlinePluginSettings;
+	projectCache: ProjectCache;
 
-	constructor(app: App, settingsUtils: SettingsUtils) {
+	constructor(
+		app: App,
+		settingsUtils: SettingsUtils,
+		projectCache: ProjectCache,
+	) {
 		this.app = app;
 		this.settingsUtils = settingsUtils;
 		this.settings = this.settingsUtils.settings;
+		this.projectCache = projectCache;
 	}
 
 	// Get list of existing projects
 	async getProjectList(): Promise<string[]> {
-		const data = await JsonUtils.loadData();
+		const projects = this.projectCache.get();
 
-		if (!data.projects || !Array.isArray(data.projects)) {
-			new Notice("No projects found in JSON data.");
-			return [];
-		}
-
-		const projectNames = data.projects.map(
+		const projectNames = projects.map(
 			(project: any) => `${project.id} ${project.name}`,
 		);
 		return projectNames;
 	}
 
 	async getAllProjectList(): Promise<string[]> {
-		const data = await JsonUtils.loadData();
-
-		if (!data.projects || !Array.isArray(data.projects)) {
-			new Notice("No projects found in JSON data.");
-			return [];
-		}
+		const projects = this.projectCache.get();
 
 		const result: string[] = [];
 
@@ -51,7 +48,7 @@ export class ProjectManager {
 			}
 		};
 
-		for (const project of data.projects) {
+		for (const project of projects) {
 			collectProjects(project);
 		}
 
@@ -68,6 +65,7 @@ export class ProjectManager {
 		}
 		return undefined;
 	}
+
 	async newProjectID(mainProjectId?: string): Promise<string> {
 		const projectCount = await this.countProjects(mainProjectId ?? "");
 		let newID: string = (projectCount + 1).toString();
@@ -80,14 +78,14 @@ export class ProjectManager {
 	}
 
 	async countProjects(projectId: string): Promise<number> {
-		const data = await JsonUtils.loadData();
+		const projects = this.projectCache.get();
 		let projectCount: number = 0;
 
 		if (!projectId) {
-			projectCount = data.projects.length;
+			projectCount = projects.length;
 		}
 
-		const mainProject = data.projects.find((p: any) => p.id === projectId);
+		const mainProject = projects.find((p: any) => p.id === projectId);
 		if (mainProject) {
 			projectCount = mainProject.subprojects.length;
 		}
@@ -115,10 +113,13 @@ export class ProjectManager {
 
 		// New Main Project
 		if (!mainProjectId) {
+			console.log("load data fur neus projekt");
 			const data = await JsonUtils.loadData();
 			const project = new ProjectImpl(projectData);
 			data.projects.push(project);
 			await JsonUtils.saveData(data);
+			console.log("try reload cache wegen neus projekt");
+			this.projectCache.reload();
 		}
 
 		// New Sub-Project
@@ -133,6 +134,7 @@ export class ProjectManager {
 			}
 			mainProject.subprojects.push(new ProjectImpl(projectData));
 			await JsonUtils.saveData(data);
+			this.projectCache.reload();
 		}
 	}
 
@@ -153,10 +155,8 @@ export class ProjectManager {
 		let path = `${this.settings.projectPath}/${dirName}`;
 
 		if (mainProjectId) {
-			const data = await JsonUtils.loadData();
-			const mainProject = data.projects.find(
-				(p) => p.id === mainProjectId,
-			);
+			const projects = this.projectCache.get();
+			const mainProject = projects.find((p) => p.id === mainProjectId);
 			path = `${mainProject?.path}/${dirName}`;
 		}
 
@@ -186,10 +186,8 @@ export class ProjectManager {
 		let mainFile = "";
 
 		if (mainProjectId) {
-			const data = await JsonUtils.loadData();
-			const mainProject = data.projects.find(
-				(p) => p.id === mainProjectId,
-			);
+			const projects = this.projectCache.get();
+			const mainProject = projects.find((p) => p.id === mainProjectId);
 			mainFile = mainProject?.file || "";
 		}
 

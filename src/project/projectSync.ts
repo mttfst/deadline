@@ -1,14 +1,17 @@
 import { App, Notice, TFile } from "obsidian";
 
+import { ProjectCache } from "../data/cache";
 import { JsonUtils } from "../utils/jsonUtils";
 import { Project, ProjectData, ProjectStatus } from "../types/types";
 
 export class ProjectSync {
 	private app: App;
 	private cachedYamlData: Map<string, string> = new Map();
+	projectCache: ProjectCache;
 
-	constructor(app: App) {
+	constructor(app: App, projectCache: ProjectCache) {
 		this.app = app;
+		this.projectCache = projectCache;
 	}
 
 	async syncProjectFromYaml(file: TFile) {
@@ -17,15 +20,12 @@ export class ProjectSync {
 
 		const updatedId = cache.frontmatter.id;
 
-		const data = await JsonUtils.loadData();
-		// console.log(data)
-		// console.log(file.path)
-		// const project = data.projects.find(p => file.path.includes(p.file));
-		const project = this.findProjectByPath(data.projects, file.path);
-		// console.log(project)
+		const projects = this.projectCache.get();
+		const project = this.findProjectByPath(projects, file.path);
+		console.log(file.path, file.name);
 
 		if (!project) {
-			// new Notice(`Projekt mit Datei ${file.path} nicht gefunden.`);
+			new Notice(`Projekt mit Datei ${file.path} nicht gefunden.`);
 			return;
 		}
 
@@ -38,7 +38,7 @@ export class ProjectSync {
 		}
 
 		const updatedData: Partial<ProjectData> = {
-			id: project.id, // Direkt aus JSON, nicht aus YAML!
+			id: project.id,
 			name: cache.frontmatter.name,
 			deadline: cache.frontmatter.deadline,
 			priority: cache.frontmatter.priority,
@@ -49,8 +49,21 @@ export class ProjectSync {
 		const updated = this.updateProject(project, updatedData);
 
 		if (updated) {
+			const data = await JsonUtils.loadData();
+			const saveProject = this.findProjectByPath(
+				data.projects,
+				file.path,
+			);
+			if (saveProject) {
+				saveProject.name = project.name;
+				saveProject.deadline = project.deadline;
+				saveProject.priority = project.priority;
+				saveProject.workload = project.workload;
+				saveProject.status = project.status;
+			}
+
 			await JsonUtils.saveData(data);
-			new Notice(`Projekt "${project.name}" erfolgreich aktualisiert.`);
+			// new Notice(`Projekt "${project.name}" erfolgreich aktualisiert.`);
 		}
 	}
 
@@ -79,11 +92,12 @@ export class ProjectSync {
 		project.path = file.parent?.path || "";
 
 		await JsonUtils.saveData(data);
+		this.projectCache.reload();
 	}
 
 	findProjectByPath(projects: Project[], path: string): Project | undefined {
-		console.log(`find project by path, ${path}`);
-		console.log(projects);
+		// console.log(`find project by path, ${path}`);
+		// console.log(projects);
 		for (const project of projects) {
 			if (project.file === path) {
 				return project;
